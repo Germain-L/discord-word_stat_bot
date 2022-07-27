@@ -4,33 +4,43 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"statbot/models"
+	"os/signal"
+	"statbot/db"
+	"statbot/handler"
+	"syscall"
 
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
+	"github.com/bwmarrin/discordgo"
 )
 
-func connectPostgres() *gorm.DB {
-	// connect to postgres using gorm
-	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable",
-		os.Getenv("DB_HOST"),
-		os.Getenv("DB_USER"),
-		os.Getenv("DB_PASSWORD"),
-		os.Getenv("DB_NAME"),
-		os.Getenv("DB_PORT"),
-	)
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+func main() {
+	db := db.ConnectPostgres()
 
+	dg, err := discordgo.New("Bot " + os.Getenv("DISCORD_BOT_TOKEN"))
 	if err != nil {
-		log.Panic(err)
+		log.Panicln(err)
 	}
 
-	db.AutoMigrate(&models.Users{}, &models.Word{})
-	return db
-}
+	h := handler.New(db)
 
-func main() {
-	dB := connectPostgres()
+	dg.AddHandler(h.ReadMessage)
+	dg.AddHandler(h.ReadDb)
 
-	log.Println(dB.DB())
+	// In this example, we only care about receiving message events.
+	dg.Identify.Intents = discordgo.IntentsGuildMessages
+
+	// Open a websocket connection to Discord and begin listening.
+	err = dg.Open()
+	if err != nil {
+		fmt.Println("error opening connection,", err)
+		return
+	}
+
+	// Wait here until CTRL-C or other term signal is received.
+	fmt.Println("Bot is now running. Press CTRL-C to exit.")
+	sc := make(chan os.Signal, 1)
+	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt, syscall.SIGTERM)
+	<-sc
+
+	// Cleanly close down the Discord session.
+	dg.Close()
 }
